@@ -1,0 +1,313 @@
+﻿<!DOCTYPE html>
+
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <meta charset="utf-8" />
+    <title></title>
+</head>
+<body>
+    <button onclick="run()">Init</button>
+    <button onclick="update()">Update</button>
+
+    <div id="content"></div>
+
+    <script>
+        Array.prototype.sample = function () {
+            return this[Math.floor((Math.random() * this.length))];
+        }
+        Array.prototype.vecAdd = function (vec) {
+            return [...this].vecAddEq(vec);
+        }
+        Array.prototype.vecAddEq = function (vec) {
+            for (var i = 0; i < this.length; i++) {
+                this[i] += vec[i];
+            }
+            return this;
+        }
+        Array.prototype.vecSub = function (vec) {
+            return [...this].vecSubEq(vec);
+        }
+        Array.prototype.vecSubEq = function (vec) {
+            for (var i = 0; i < this.length; i++) {
+                this[i] -= vec[i];
+            }
+            return this;
+        }
+
+        var market;
+        var marketState;
+        var crusoe;
+        var friday;
+        function run() {
+            market = setupCrusoeV2();
+            crusoe = market.citizens[0];
+            friday = market.citizens[1];
+
+            market.resetDay();
+            console.log("Market: ", market);
+
+            var totalMoney = market.totalMoney();
+            var productCount = market.productCount;
+            var averageSkill = market.averageSkill();
+            var averageProduction = market.citizens.length * market.workCapacity / averageSkill;
+            var startingPrice = Math.round(totalMoney / averageProduction);
+
+            console.log("Demand curves:", friday.demandCurves());
+
+            marketState = new MarketState(productCount, startingPrice);
+            //marketState.demand = [8, 8, 10];
+            //marketState.prices = [5, 5, 11];
+            //marketState.producerCount = [1, 1, 0];
+            //marketState.supply = [20, 20, 0];
+            console.log("State: ", marketState);
+        }
+
+        var sellActions = [[0, 20, 0], [20, 0, 0]];
+        function update() {
+            updatePriceStep(market, marketState, sellActions);
+            //console.log("Supply_i: ", sellActions);
+        }
+
+        function updatePriceStep(market, marketState, sellActions) {
+            sellActions = [
+                sellAction(marketState, market.citizens[0], sellActions[0]),
+                sellAction(marketState, market.citizens[1], sellActions[1])
+            ]
+
+            var buyActions = [
+                buyAction(marketState, crusoe),
+                buyAction(marketState, friday),
+            ]
+
+            marketState.setSupplyAndDemand(sellActions, buyActions);
+            marketState.adjustPrices();
+            console.log("Supply", sellActions, "Demand: ", buyActions, "Prices:", marketState.prices);
+            console.log("New State: ", marketState);
+        }
+
+        function setupCrusoeV2() {
+            var crusoe = new Citizen();
+            crusoe.skills = [2, 1, 2];
+            crusoe.preferences = [5, 2, 1];
+            crusoe.preferencesDecay = [0.5, 0.5, 0.9];
+            crusoe.money = 1000;
+
+            var friday = new Citizen();
+            friday.skills = [1, 2, 2];
+            friday.preferences = [5, 2, 1];
+            friday.preferencesDecay = [0.5, 0.5, 0.9];
+            friday.money = 1000;
+
+            var market = new Market();
+            market.productCount = 3;
+            market.productNames = ["Fishies", "Coconuts", "Leisure"];
+            market.citizens = [crusoe, friday];
+            market.workCapacity = 20;
+
+            return market;
+        }
+
+        class Market {
+            constructor() {
+                this.productCount = 0;
+                this.productNames = [];
+                this.citizens = [];
+                this.timeStamp = 0;
+                this.workCapacity = 0;
+            }
+
+            totalMoney() {
+                var result = 0;
+                for (var i = 0; i < this.citizens.length; i++) {
+                    result += this.citizens[i].money
+                }
+                return result;
+            }
+
+            averageSkill() {
+                var sum = 0;
+                for (var i = 0; i < this.citizens.length; i++) {
+                    sum += this.citizens[i].averageSkill();
+                }
+                return sum / this.citizens.length;
+            }
+
+            resetDay() {
+                for (var i = 0; i < this.citizens.length; i++) {
+                    this.citizens[i].work = this.workCapacity;
+                    this.citizens[i].happiness = 0;
+                }
+            }
+        }
+
+        class Citizen {
+            constructor() {
+                this.skills = [];
+                this.preferences = [];
+                this.preferencesDecay = [];
+
+                this.work = 0;
+                this.money = 0;
+                this.happiness = 0;
+            }
+
+            demandCurves() {
+                var n = this.preferences.length;
+                var curves = new Array(n);
+                for (var i = 0; i < n; i++) {
+                    curves[i] = new Array(50);
+                    for (var j = 0; j < curves[i].length; j++) {
+                        curves[i][j] = this.preferences[i] * Math.pow(this.preferencesDecay[i], j);
+                    }
+                }
+                return curves;
+            }
+
+            averageSkill() {
+                var sum = 0;
+                for (var i = 0; i < this.skills.length; i++) {
+                    sum += this.skills[i];
+                }
+                return sum / this.skills.length;
+            }
+        }
+
+        class MarketState {
+            constructor(productCount, startingPrice) {
+                this.prices = new Array(productCount);
+                this.supply = new Array(productCount);
+                this.demand = new Array(productCount);
+                this.producerCount = new Array(productCount);
+                this.prices.fill(startingPrice);
+                this.supply.fill(0);
+                this.demand.fill(0);
+                this.producerCount.fill(0);
+            }
+
+            setSupplyAndDemand(supply, demand) {
+                this.supply.fill(0);
+                this.demand.fill(0);
+                this.producerCount.fill(0);
+                for (var i = 0; i < supply.length; i++) {
+                    this.supply.vecAddEq(supply[i]);
+                    for (var j = 0; j < supply[i].length; j++) {
+                        if (supply[i][j] > 0) {
+                            this.producerCount[j]++;
+                        }
+                    }
+                }
+                for (var i = 0; i < demand.length; i++) {
+                    this.demand.vecAddEq(demand[i]);
+                }
+            }
+
+            adjustPrices() {
+                var extraSupply = this.supply.vecSub(this.demand);
+                for (var i = 0; i < extraSupply.length; i++) {
+                    var k = (this.demand[i]+1) / (this.supply[i]+1);
+                    if (extraSupply[i] < 0) { this.prices[i] = Math.ceil(this.prices[i] * (1 + k) / 2); }
+                    else if (extraSupply[i] > 0) { this.prices[i] = Math.floor(this.prices[i] * (1 + k) / 2); }
+                }
+            }
+        }
+
+        function buyAction(marketState, citizen) {
+            var productCount = marketState.prices.length;
+            var buyAction = new Array(productCount);
+            var money = citizen.money;
+            buyAction.fill(0);
+            while (true) {
+                var buyCandidates = selectBestBuy(marketState, citizen, money, buyAction);
+                if (buyCandidates.length == 0) {
+                    // no more candidates
+                    return buyAction;
+                }
+                var buy = buyCandidates.sample();
+                buyAction[buy]++;
+                money -= marketState.prices[buy];
+            }
+
+            return buyAction;
+        }
+
+        function selectBestBuy(marketState, citizen, money, buyAction) {
+            var bestMetric = 0;
+            var bestProducts = [];
+            var productCount = marketState.prices.length;
+            for (var productId = 0; productId < productCount; productId++) {
+                var price = marketState.prices[productId];
+                if (price > money) continue;
+                var utility = citizen.preferences[productId];
+                var utilDecay = citizen.preferencesDecay[productId];
+                var currentCount = buyAction[productId];
+                var metric = (Math.pow(utilDecay, currentCount) * utility) / price;
+                if (metric > bestMetric) {
+                    bestMetric = metric;
+                    bestProducts = [productId];
+                } else if (metric == bestMetric) {
+                    bestProducts.push(productId);
+                }
+            }
+            return bestProducts;
+        }
+
+        // This demand function is bogus.
+        function sellAction(marketState, citizen, sellAction) {
+            // sellAction should have the previous sell action
+            // adjust towards supply/demand.
+            // Only reduce production that is too high.
+            var delta = marketState.supply.vecSub(marketState.demand);
+            for (var i = 0; i < delta.length; i++) {
+                delta[i] = Math.max(delta[i], 0);
+                delta[i] /= 2 * marketState.producerCount[i];
+            }
+            for (var i = 0; i < delta.length; i++) {
+                if (sellAction[i] == 0) continue;
+                while (delta[i] > 0 && sellAction[i] > 0) {
+                    delta[i]--;
+                    sellAction[i]--;
+                }
+                if (delta[i] > 0 && sellAction[i] > 0) {
+                    if (Math.random() < sellAction[i]) {
+                        delta[i]--;
+                        sellAction[i]--;
+                    }
+                }
+            }
+
+            // calculate how much work we can do
+            var work = citizen.work;
+            for (var i = 0; i < sellAction.length; i++) {
+                work -= sellAction[i] * citizen.skills[i];
+            }
+            // find the best candidates for production
+            var bestMetric = 0;
+            var bestSell = [];
+            for (var i = 0; i < sellAction.length; i++) {
+                var metric = marketState.prices[i] / citizen.skills[i];
+                if (metric > bestMetric) {
+                    bestMetric = metric;
+                    bestSell = [i];
+                } else if (metric == bestMetric) {
+                    bestSell.push(i);
+                }
+            }
+            // increase production until we can't produce more
+            while (bestSell.length > 0) {
+                for (var i = 0; i < bestSell.length; i++) {
+                    var productId = bestSell[i];
+                    if (citizen.skills[productId] <= work) {
+                        sellAction[productId]++;
+                        work -= citizen.skills[productId];
+                    } else {
+                        bestSell[i] = -1;
+                    }
+                }
+                bestSell = bestSell.filter(id => id != -1);
+            }
+            return sellAction;
+        }
+
+    </script>
+</body>
+</html>
